@@ -29,6 +29,36 @@ pub struct NodeConfig {
     /// the node; see [`CoverStrategy`] for the two options.
     pub cover: CoverStrategy,
 
+    /// Number of distinct peers each outbound frame is forwarded to
+    /// on every cover tick. Higher fanout → faster gossip
+    /// convergence at the cost of proportionally more bandwidth.
+    ///
+    /// `fanout = 1` preserves the original fanout-1 random-walk
+    /// behavior; production deployments should typically use 3–6
+    /// (the standard gossip-sub range) so that a single message
+    /// reaches the whole overlay in `O(log N)` hops rather than
+    /// `O(N)` hops.
+    ///
+    /// The effective fanout is clamped to the number of connected
+    /// peers on every tick, so a node with fewer peers than
+    /// `fanout` simply sends to all of them.
+    ///
+    /// # Bandwidth
+    ///
+    /// Total outbound bandwidth is
+    /// `fanout * message_size * cover_rate`. Raising `fanout`
+    /// raises bandwidth linearly but does **not** change the
+    /// timing distribution of outbound traffic (every tick still
+    /// emits exactly `fanout` frames, real or cover), so the
+    /// metadata-privacy property is preserved.
+    ///
+    /// # Relay inflow
+    ///
+    /// With `fanout = f` and a cover rate of `r` ticks/s, the
+    /// average relay inflow at each node is `f * r` frames/s.
+    /// Size [`NodeConfig::relay_outbox_capacity`] accordingly.
+    pub fanout: usize,
+
     /// The on-the-wire size, in bytes, of every gossip frame.
     ///
     /// All frames (real and cover) are padded to exactly this
@@ -61,11 +91,13 @@ pub struct NodeConfig {
     /// front. Under sustained inflow, the oldest queued relay is
     /// discarded first.
     ///
-    /// With `n` peers per node and a cover rate of `r` messages
-    /// per second, the steady-state inflow is `(n - 1) * r`. A
-    /// capacity of `(n - 1) * r * drain_time_seconds` keeps
-    /// eviction rare; smaller values trade propagation reliability
-    /// for memory.
+    /// With fanout `f`, a cover rate of `r` ticks/s, and `n`
+    /// connected peers, the average relay inflow is
+    /// `f * r` frames/s (worst-case burst is `n * f * r` if every
+    /// peer happens to forward to this node on the same tick). A
+    /// capacity of `f * r * drain_time_seconds` keeps eviction
+    /// rare under average load; size for the burst if propagation
+    /// latency is critical.
     pub relay_outbox_capacity: usize,
 
     /// Capacity of the LRU cache used to suppress re-broadcast of
@@ -112,6 +144,12 @@ impl Default for NodeConfig {
             cover: CoverStrategy::Constant {
                 interval: Duration::from_secs(1),
             },
+            // 3 is the standard gossip-sub fanout: enough for
+            // O(log N) convergence in typical overlays, modest
+            // enough that the default 1 s cover interval stays
+            // cheap. Raise it for denser overlays or tighter
+            // convergence requirements.
+            fanout: 3,
             // 256 bytes = 32-byte ID + 224 bytes of payload. Big
             // enough for a short application message after the
             // ID, small enough to keep per-connection memory low.

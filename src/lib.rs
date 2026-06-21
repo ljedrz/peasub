@@ -105,8 +105,11 @@
 //!   the *front* of the relay outbox.
 //! - When a tick fires, the cover scheduler either pulls from
 //!   the application outbox, then the relay outbox, or
-//!   generates a cover frame — and ships it to one
-//!   randomly-chosen connected peer.
+//!   generates a cover frame — and ships it to `fanout`
+//!   randomly-chosen connected peers. Every tick emits exactly
+//!   `fanout` frames of the same on-the-wire size, so the
+//!   metadata-privacy property is preserved regardless of
+//!   `fanout`.
 //!
 //! # Choosing the cover rate
 //!
@@ -117,8 +120,8 @@
 //!   rate, otherwise its messages accumulate in the application
 //!   outbox;
 //! - `relay_outbox_capacity` should be sized to
-//!   `(num_peers - 1) * cover_rate * drain_seconds` to keep
-//!   relay backlog from crowding out user data.
+//!   `fanout * cover_rate * drain_seconds` to keep relay backlog
+//!   from crowding out user data.
 //!
 //! [`pea2pea`]: pea2pea
 
@@ -136,4 +139,4 @@ pub use crate::node::Node;
 
 /// Re-exported so that callers can wire up a topology in tests
 /// without adding `pea2pea` as a direct dependency.
-pub use pea2pea::{self, Topology, connect_nodes};
+pub use pea2pea::{self, connect_nodes, Topology};

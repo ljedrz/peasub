@@ -43,17 +43,19 @@ pub struct CoverScheduler {
     /// [`Node::shutdown`]: crate::Node::shutdown
     wake: Notify,
     /// Round-robin cursor into the peer list. Mixing the cursor
-    /// with a per-tick random offset (rather than picking peers
+    /// with a per-pick random offset (rather than picking peers
     /// uniformly at random) avoids the pathological case of
     /// every node in a small ring happening to select the same
     /// peer on the same tick.
     cursor: Mutex<usize>,
-    /// The last peer we shipped a frame to; used to bias the
-    /// next selection away from it. This prevents the
-    /// "ping-pong" failure mode in which two adjacent nodes
+    /// The peers we shipped frames to on the previous tick; used
+    /// to bias the next selection away from them. This prevents
+    /// the "ping-pong" failure mode in which two adjacent nodes
     /// bounce a single message back and forth indefinitely
-    /// without ever reaching the rest of the ring.
-    last_peer: Mutex<Option<SocketAddr>>,
+    /// without ever reaching the rest of the overlay. With
+    /// `fanout > 1` the set covers every peer sent to in the
+    /// previous tick.
+    last_peers: Mutex<Vec<SocketAddr>>,
 }
 
 impl CoverScheduler {
@@ -65,7 +67,7 @@ impl CoverScheduler {
             strategy,
             wake: Notify::new(),
             cursor: Mutex::new(0),
-            last_peer: Mutex::new(None),
+            last_peers: Mutex::new(Vec::new()),
         }
     }
 
@@ -140,45 +142,81 @@ impl CoverScheduler {
         self.state.shutting_down().load(Ordering::SeqCst)
     }
 
-    /// Pick a peer, pull the next message, and ship it.
+    /// Pull the next message and ship it to `fanout` distinct
+    /// peers. Every tick emits exactly `fanout` frames of the same
+    /// on-the-wire size, whether the message is real, relayed, or
+    /// cover, so the metadata-privacy property is preserved: an
+    /// observer sees a constant (or Poisson-distributed) stream
+    /// of same-sized frames regardless of application activity.
     async fn send_one(&self, node: &Node) {
         let peers = node.connected_peers();
         if peers.is_empty() {
             return;
         }
 
-        let peer = {
-            let mut cursor = self.cursor.lock();
-            let mut last_peer = self.last_peer.lock();
-            let mut rng = rand::rng();
-
-            // Build a candidate set that excludes the peer we sent
-            // the previous frame to. With only one peer, of
-            // course, we have no choice but to send to it again.
-            let candidates: Vec<usize> = if peers.len() > 1 && last_peer.is_some() {
-                let last = last_peer.unwrap();
-                peers
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, &p)| if p == last { None } else { Some(i) })
-                    .collect()
-            } else {
-                (0..peers.len()).collect()
-            };
-
-            // Pick among the candidates using the round-robin
-            // cursor plus a random offset, so two adjacent nodes
-            // do not select the same "next" peer in lockstep.
-            let offset = rng.random_range(0..candidates.len());
-            let idx = candidates[(*cursor + offset) % candidates.len()];
-            *cursor = cursor.wrapping_add(1);
-            *last_peer = Some(peers[idx]);
-            peers[idx]
-        };
-
+        let fanout = self.state.config().fanout.min(peers.len());
         let payload = self.state.next_outbound();
-        if let Err(e) = node.unicast_fast(peer, payload) {
-            debug!(parent: node.node().span(), "cover send to {peer} failed: {e}");
+
+        let targets = self.pick_targets(&peers, fanout);
+        for peer in targets {
+            if let Err(e) = node.unicast_fast(peer, payload.clone()) {
+                debug!(parent: node.node().span(), "cover send to {peer} failed: {e}");
+            }
         }
+    }
+
+    /// Pick `fanout` distinct peer addresses from `peers`, biasing
+    /// the selection away from the peers we sent to on the previous
+    /// tick.
+    ///
+    /// The selection proceeds in two phases:
+    ///
+    /// 1. Prefer "fresh" peers (not in `last_peers`). This avoids
+    ///    the ping-pong failure mode where two adjacent nodes
+    ///    bounce a message between themselves.
+    /// 2. If the fresh pool is exhausted before `fanout` peers are
+    ///    chosen, fall back to the recently-used pool.
+    ///
+    /// Within each pool, the cursor + per-pick random offset
+    /// ensures two adjacent nodes don't select the same "next"
+    /// peer in lockstep. The cursor advances on every pick, so
+    /// over time the selection rotates through the whole peer set
+    /// even when `fanout` is small.
+    fn pick_targets(&self, peers: &[SocketAddr], fanout: usize) -> Vec<SocketAddr> {
+        let mut rng = rand::rng();
+        let mut cursor = self.cursor.lock();
+        let mut last_peers = self.last_peers.lock();
+
+        let mut fresh: Vec<usize> = Vec::new();
+        let mut used: Vec<usize> = Vec::new();
+        for (i, p) in peers.iter().enumerate() {
+            if last_peers.contains(p) {
+                used.push(i);
+            } else {
+                fresh.push(i);
+            }
+        }
+
+        let mut chosen: Vec<usize> = Vec::with_capacity(fanout);
+        for _ in 0..fanout {
+            let pool = if !fresh.is_empty() {
+                &mut fresh
+            } else if !used.is_empty() {
+                &mut used
+            } else {
+                break;
+            };
+            let remaining = pool.len();
+            let offset = rng.random_range(0..remaining);
+            let pick = (*cursor + offset) % remaining;
+            *cursor = cursor.wrapping_add(1);
+            chosen.push(pool.remove(pick));
+        }
+
+        last_peers.clear();
+        let result: Vec<SocketAddr> = chosen.iter().map(|&i| peers[i]).collect();
+        last_peers.extend(result.iter().copied());
+
+        result
     }
 }

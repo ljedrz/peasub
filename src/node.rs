@@ -53,7 +53,8 @@ impl Node {
     /// - `message_size > max_frame_size` (would be rejected by the
     ///   decoder);
     /// - `app_outbox_capacity == 0` or `relay_outbox_capacity == 0`
-    ///   (no buffering is possible).
+    ///   (no buffering is possible);
+    /// - `fanout == 0` (no peers would ever be selected).
     pub fn new(config: NodeConfig) -> Self {
         let p2p_config = Config {
             name: config.name.clone(),
@@ -84,6 +85,7 @@ impl Node {
             config.relay_outbox_capacity > 0,
             "relay_outbox_capacity must be non-zero",
         );
+        assert!(config.fanout > 0, "fanout must be non-zero",);
 
         let p2p = P2pNode::new(p2p_config);
         let state = Arc::new(GossipState::new(&config));

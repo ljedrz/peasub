@@ -32,9 +32,9 @@ buffer. The first 32 bytes are a random message identifier; the
 remainder is the application payload padded with random bytes. Real
 (application-submitted) messages and cover (dummy) messages are
 indistinguishable on the wire.
-
-A background task ticks at the configured cover rate. On every tick,
-it pulls the next message to send from one of two internal queues:
+A background task ticks at the configured cover rate. On every
+tick, it pulls the next message to send from one of two internal
+queues:
 
 1. The **application outbox** — messages submitted via `Node::publish`.
    Always drained first, so user data is never delayed by relay
@@ -49,6 +49,11 @@ it pulls the next message to send from one of two internal queues:
 If both queues are empty, a fresh cover message is generated. All
 three paths produce a frame of the same on-the-wire size, so an
 observer cannot tell them apart by length or by when they arrive.
+
+The message is then sent to `fanout` distinct randomly-chosen
+peers (default 3). Because every tick emits exactly `fanout` frames
+of the same size — real or cover — the outbound traffic's timing
+and size distributions remain independent of application activity.
 
 A peer receiving a frame deduplicates it by ID (LRU cache), delivers
 it to local subscribers via a `tokio::sync::broadcast` channel, and
@@ -97,8 +102,29 @@ bandwidth trade-off:
 
 The application must publish no faster than the cover rate; otherwise
 its messages accumulate in the application outbox. The
-`relay_outbox_capacity` should be sized to `(num_peers - 1) * cover_rate *
+`relay_outbox_capacity` should be sized to `fanout * cover_rate *
 drain_seconds` to keep relay backlog from crowding out user data.
+
+## Fanout
+
+`fanout` (default 3) controls how many distinct peers each outbound
+frame is forwarded to on every cover tick. It trades convergence
+speed against bandwidth:
+
+- **Higher** fanout → faster gossip convergence (`O(log N)` hops),
+  proportionally more bandwidth.
+- **Lower** fanout → slower convergence (`O(N)` hops at fanout 1),
+  less bandwidth.
+
+Total outbound bandwidth is `fanout * message_size * cover_rate`.
+Raising `fanout` does **not** change the timing distribution of
+outbound traffic (every tick still emits exactly `fanout` frames,
+real or cover), so the metadata-privacy property is preserved
+regardless of the fanout value.
+
+The effective fanout is clamped to the number of connected peers on
+every tick, so a node with fewer peers than `fanout` simply sends to
+all of them.
 
 ## Cover strategies
 
@@ -119,11 +145,6 @@ by user activity — the strictest form of metadata privacy.
 
 ## Limitations
 
-- **Fanout is 1.** A single message is sent to one random peer per
-  cover tick. In a sparse overlay (e.g. a ring) the gossip chain can
-  bounce between two nodes for a while before stumbling onto the
-  rest; for tight convergence requirements, use a denser topology
-  or layer a higher-fanout gossip on top.
 - **No application-level encryption.** Cover hides the *timing* of
   messages, not their *content*. The application is responsible for
   encrypting payloads if end-to-end confidentiality is needed; a
@@ -132,8 +153,9 @@ by user activity — the strictest form of metadata privacy.
 - **TCP only.** Built on `pea2pea`, which is TCP-based. A timing
   adversary that observes TCP-level behavior (Nagle, delayed ACKs,
   etc.) may be able to extract additional features; consider
-  length-padding or constant-rate shaping at the application layer
-  if that is in scope.
+  disabling Nagle via a `pea2pea` `Handshake` that sets
+  `TCP_NODELAY`, or layering constant-rate shaping at the
+  application layer if that is in scope.
 
 ## License
 

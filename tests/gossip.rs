@@ -13,11 +13,12 @@ use peasub::{connect_nodes, CoverStrategy, Node, NodeConfig, Topology};
 /// short, which is what makes the test's propagation deadline achievable
 /// under a 50 ms cover rate. Real deployments should size the relay
 /// outbox based on `(num_peers - 1) * cover_rate * drain_seconds`.
-fn test_config(name: &str, cover: CoverStrategy) -> NodeConfig {
+fn test_config(name: &str, cover: CoverStrategy, fanout: usize) -> NodeConfig {
     NodeConfig {
         name: Some(name.into()),
         listener_addr: Some("127.0.0.1:0".parse().unwrap()),
         cover,
+        fanout,
         message_size: 128,
         app_outbox_capacity: 16,
         relay_outbox_capacity: 4,
@@ -29,11 +30,11 @@ fn test_config(name: &str, cover: CoverStrategy) -> NodeConfig {
 }
 
 /// Spawns the given number of nodes (each with the provided cover
-/// strategy) and connects them in a mesh topology.
-async fn spawn_mesh(n: usize, cover: CoverStrategy) -> Vec<Node> {
+/// strategy and fanout) and connects them in a mesh topology.
+async fn spawn_mesh(n: usize, cover: CoverStrategy, fanout: usize) -> Vec<Node> {
     let mut nodes = Vec::with_capacity(n);
     for i in 0..n {
-        let node = Node::new(test_config(&format!("node-{i}"), cover));
+        let node = Node::new(test_config(&format!("node-{i}"), cover, fanout));
         node.spawn().await.expect("spawn");
         nodes.push(node);
     }
@@ -63,12 +64,14 @@ async fn real_message_directly_received_by_one_peer() {
         CoverStrategy::Constant {
             interval: Duration::from_millis(50),
         },
+        1,
     ));
     let bob = Node::new(test_config(
         "bob",
         CoverStrategy::Constant {
             interval: Duration::from_millis(50),
         },
+        1,
     ));
     alice.spawn().await.unwrap();
     bob.spawn().await.unwrap();
@@ -122,6 +125,7 @@ async fn real_message_propagates_to_majority() {
         CoverStrategy::Constant {
             interval: Duration::from_millis(50),
         },
+        1,
     )
     .await;
 
@@ -170,12 +174,14 @@ async fn cover_traffic_runs_at_configured_constant_rate() {
         CoverStrategy::Constant {
             interval: Duration::from_millis(50),
         },
+        1,
     ));
     let bob = Node::new(test_config(
         "bob",
         CoverStrategy::Constant {
             interval: Duration::from_millis(50),
         },
+        1,
     ));
 
     alice.spawn().await.unwrap();
@@ -220,8 +226,12 @@ async fn cover_traffic_runs_at_configured_poisson_rate() {
     // Same shape as the constant-rate test, but with a Poisson schedule
     // at 25 msg/s on average. We allow a wide slack band because the
     // 1 s measurement window is short relative to the variance.
-    let alice = Node::new(test_config("alice", CoverStrategy::Poisson { rate: 25.0 }));
-    let bob = Node::new(test_config("bob", CoverStrategy::Poisson { rate: 25.0 }));
+    let alice = Node::new(test_config(
+        "alice",
+        CoverStrategy::Poisson { rate: 25.0 },
+        1,
+    ));
+    let bob = Node::new(test_config("bob", CoverStrategy::Poisson { rate: 25.0 }, 1));
 
     alice.spawn().await.unwrap();
     bob.spawn().await.unwrap();
@@ -270,6 +280,7 @@ async fn duplicate_messages_are_dropped() {
         CoverStrategy::Constant {
             interval: Duration::from_millis(50),
         },
+        1,
     )
     .await;
 
@@ -332,6 +343,7 @@ async fn payload_too_large_is_rejected() {
         CoverStrategy::Constant {
             interval: Duration::from_millis(50),
         },
+        1,
     ));
     node.spawn().await.unwrap();
 
@@ -343,4 +355,56 @@ async fn payload_too_large_is_rejected() {
     assert!(msg.contains("payload too large"), "unexpected error: {msg}");
 
     node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn fanout_reaches_all_nodes() {
+    // With fanout >= 2 in a small mesh, a single published message
+    // should reach *every* node within a short window — the defining
+    // property of higher-fanout gossip vs. the fanout-1 random walk,
+    // which only guarantees a majority.
+    let nodes = spawn_mesh(
+        5,
+        CoverStrategy::Constant {
+            interval: Duration::from_millis(50),
+        },
+        3,
+    )
+    .await;
+
+    let mut subs: Vec<_> = nodes.iter().map(|n| n.subscribe()).collect();
+    let marker = b"peasub-fanout-marker".to_vec();
+    nodes[0].publish(&marker).expect("publish");
+
+    let mut seen = vec![false; nodes.len()];
+    // node 0 is the publisher; it "has" the message by definition.
+    seen[0] = true;
+    let deadline = Instant::now() + Duration::from_secs(3);
+
+    while seen.iter().filter(|&&s| s).count() < nodes.len() && Instant::now() < deadline {
+        for (i, rx) in subs.iter_mut().enumerate() {
+            if seen[i] {
+                continue;
+            }
+            if let Ok(Ok(buf)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
+                if contains_payload(&buf, &marker) {
+                    seen[i] = true;
+                }
+            }
+        }
+    }
+
+    let missing: Vec<usize> = seen
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &s)| if !s { Some(i) } else { None })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "with fanout=3, marker did not reach nodes {missing:?} (seen: {seen:?})",
+    );
+
+    for node in &nodes {
+        node.shutdown().await;
+    }
 }
