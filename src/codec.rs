@@ -1,21 +1,41 @@
+//! Length-delimited framing for `peasub` frames.
+
 use std::io;
 
 use bytes::BytesMut;
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
-/// A `pea2pea` codec that frames every gossip message to a fixed on-the-wire
-/// size, regardless of the actual payload contents.
+/// A `pea2pea` codec that constrains every gossip frame on the wire
+/// to a single, fixed size, regardless of the actual payload
+/// contents.
 ///
-/// All frames consist of a 4-byte big-endian length prefix followed by
-/// exactly `expected_size` payload bytes. The combination of constant
-/// length and constant payload size is what makes cover traffic
-/// indistinguishable from real traffic on the wire.
+/// # Wire format
+///
+/// ```text
+/// +--------+----------------+
+/// | length |     payload    |
+/// | (4 B)  |  (expected_size)|
+/// +--------+----------------+
+/// ```
+///
+/// - `length`: a 4-byte big-endian unsigned integer. Always equal
+///   to `expected_size` for a well-formed frame; any other value
+///   causes the connection to be torn down by the decoder.
+/// - `payload`: exactly `expected_size` bytes of frame data. Real
+///   gossip messages and cover messages are byte-for-byte
+///   indistinguishable inside this field, which is what makes
+///   traffic-analysis resistance work: an observer cannot tell
+///   "what" is being sent, only "when" and "to whom" and "how
+///   big" (and the last two are constant).
 pub struct Codec {
     inner: LengthDelimitedCodec,
     expected_size: usize,
 }
 
 impl Codec {
+    /// Creates a codec that accepts frames of exactly
+    /// `expected_size` payload bytes and rejects any frame larger
+    /// than `max_frame_size` bytes (defensive DoS bound).
     pub fn new(expected_size: usize, max_frame_size: usize) -> Self {
         let inner = LengthDelimitedCodec::builder()
             .max_frame_length(max_frame_size)
