@@ -7,7 +7,7 @@ description = "A metadata-private gossip protocol built on pea2pea, with constan
 repository = "https://github.com/ljedrz/peasub"
 readme = "README.md"
 keywords = ["p2p", "gossip", "privacy", "metadata", "cover-traffic"]
-categories = ["network-programming", "cryptography"]
+categories = ["network-programming"]
 
 [dependencies]
 pea2pea = "0.56"
