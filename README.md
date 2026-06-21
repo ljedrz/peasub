@@ -59,38 +59,93 @@ A peer receiving a frame deduplicates it by ID (LRU cache), delivers
 it to local subscribers via a `tokio::sync::broadcast` channel, and
 re-queues it for forwarding.
 
+## Receiving messages
+
+`Node::subscribe` yields *every* frame the node sees on the wire —
+real and cover alike. This is intentional: the library cannot tell
+them apart (that's the privacy property), so the responsibility for
+distinguishing real application data from random cover bytes falls
+on the application.
+
+The conventional pattern is to frame your payloads with a
+recognizable structure that random cover bytes will not match by
+chance:
+
+- a **magic header** (4–8 bytes) makes accidental collisions
+  negligible (`1/2^32` per frame for a 4-byte header);
+- a **length field** after the header lets the receiver strip the
+  random padding `peasub` appends to fill the fixed `message_size`;
+- for stronger guarantees, use a **MAC** or **authenticated
+  encryption** over the payload — this also defeats cover-frame
+  forgery by a malicious peer.
+
+See `examples/two_nodes.rs` for a complete worked example of this
+pattern.
 ## Quick start
+
+Two nodes, one real message, end to end. Alice publishes, Bob
+receives and extracts the payload from the cover stream:
 
 ```rust
 use std::time::Duration;
-use peasub::{CoverStrategy, Node, NodeConfig};
+use peasub::{CoverStrategy, Node, NodeConfig, ID_SIZE};
+
+const MAGIC: &[u8; 4] = b"PESU";
+
+fn frame_payload(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(MAGIC.len() + 1 + data.len());
+    out.extend_from_slice(MAGIC);
+    out.push(data.len() as u8);
+    out.extend_from_slice(data);
+    out
+}
+
+fn extract_payload(frame: &[u8]) -> Option<&[u8]> {
+    let payload = frame.get(ID_SIZE..)?;
+    let rest = payload.strip_prefix(MAGIC)?;
+    let len = *rest.first()? as usize;
+    rest.get(1..1 + len)
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let node = Node::new(NodeConfig {
-        name: Some("alice".into()),
+    let mk = || Node::new(NodeConfig {
         listener_addr: Some("127.0.0.1:0".parse()?),
-        cover: CoverStrategy::Constant {
-            interval: Duration::from_millis(100),
-        },
+        cover: CoverStrategy::Constant { interval: Duration::from_millis(100) },
         ..Default::default()
     });
 
-    let _addr = node.spawn().await?;
+    let alice = mk();
+    let bob = mk();
+    alice.spawn().await?;
+    bob.spawn().await?;
 
-    // subscribe to incoming frames
-    let mut rx = node.subscribe();
+    let bob_addr = bob.local_addr().await?;
+    alice.connect(bob_addr).await?;
 
-    // submit a real message
-    node.publish(b"hello, peasub")?;
+    let mut bob_rx = bob.subscribe();
+    alice.publish(&frame_payload(b"hello, peasub"))?;
 
-    // ... process received frames ...
-    drop(rx);
+    // Bob drains frames until the real one arrives; cover frames
+    // are skipped by extract_payload.
+    loop {
+        if let Ok(frame) = bob_rx.recv().await {
+            if let Some(payload) = extract_payload(&frame) {
+                println!("Bob got: {:?}", String::from_utf8_lossy(payload));
+                break;
+            }
+        }
+    }
 
-    node.shutdown().await;
+    alice.shutdown().await;
+    bob.shutdown().await;
     Ok(())
 }
 ```
+
+Run `cargo run --example two_nodes` to see this in action, or
+`cargo run --example demo` to see the traffic-analysis-resistance
+property visualized.
 
 ## Choosing the cover rate
 
