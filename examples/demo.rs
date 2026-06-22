@@ -21,9 +21,9 @@ use peasub::{CoverStrategy, Node, NodeConfig};
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("╔═══════════════════════════════════════════════════════════════╗");
-    println!("║  peasub — traffic-analysis resistance demo                   ║");
-    println!("╚═══════════════════════════════════════════════════════════════╝");
+    println!("╔═════════════════════════════════════════════════════════════╗");
+    println!("║  peasub — traffic-analysis resistance demo                  ║");
+    println!("╚═════════════════════════════════════════════════════════════╝");
     println!();
     println!("Two nodes (Alice, Bob), cover rate = 100 ms. Alice publishes");
     println!("a single real message at t = 1.0 s. Bob records every frame he");

@@ -12,9 +12,9 @@ use peasub::{CoverStrategy, Node, NodeConfig};
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("╔═══════════════════════════════════════════════════════════════╗");
-    println!("║  peasub — Poisson cover-traffic demo                         ║");
-    println!("╚═══════════════════════════════════════════════════════════════╝");
+    println!("╔═════════════════════════════════════════════════════════════╗");
+    println!("║  peasub — Poisson cover-traffic demo                        ║");
+    println!("╚═════════════════════════════════════════════════════════════╝");
     println!();
     println!("Cover rate: Poisson with mean 10 messages/second (mean");
     println!("inter-arrival = 100 ms, but the actual times are exponentially");

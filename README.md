@@ -31,7 +31,11 @@ Every gossip frame on the wire is a fixed-size, length-prefixed
 buffer. The first 32 bytes are a random message identifier; the
 remainder is the application payload padded with random bytes. Real
 (application-submitted) messages and cover (dummy) messages are
-indistinguishable on the wire.
+indistinguishable on the wire **as long as the payload bytes are
+themselves indistinguishable from random** — i.e. encrypted. A
+plaintext payload (anything with recognizable structure) defeats the
+cover property; see *Receiving messages* for the recommended pattern.
+
 A background task ticks at the configured cover rate. On every
 tick, it pulls the next message to send from one of two internal
 queues:
@@ -67,20 +71,23 @@ them apart (that's the privacy property), so the responsibility for
 distinguishing real application data from random cover bytes falls
 on the application.
 
-The conventional pattern is to frame your payloads with a
-recognizable structure that random cover bytes will not match by
-chance:
+The recommended pattern is **authenticated encryption** over the
+payload. This does double duty:
 
-- a **magic header** (4–8 bytes) makes accidental collisions
-  negligible (`1/2^32` per frame for a 4-byte header);
-- a **length field** after the header lets the receiver strip the
-  random padding `peasub` appends to fill the fixed `message_size`;
-- for stronger guarantees, use a **MAC** or **authenticated
-  encryption** over the payload — this also defeats cover-frame
-  forgery by a malicious peer.
+- the AEAD tag is the "recognizable structure" — a frame that fails to
+  authenticate is cover (or addressed to another key), so you need no
+  plaintext magic header, and there is no plaintext tell on the wire;
+- ciphertext is indistinguishable from the random cover bytes, which is
+  what makes the metadata-privacy claim hold against an observer that
+  can read raw frames;
+- relaying nodes forward frames they cannot decrypt, so content is
+  hidden from intermediate peers too.
 
-See `examples/two_nodes.rs` for a complete worked example of this
-pattern.
+Put the true length *inside* the encrypted block and size the sealed
+payload to exactly `message_size - ID_SIZE` so `peasub` adds no padding
+and the boundaries are deterministic. See `examples/demo.rs` for a
+complete worked example.
+
 ## Quick start
 
 Two nodes, one real message, end to end. Alice publishes, Bob
@@ -89,26 +96,52 @@ receives and extracts the payload from the cover stream:
 ```rust
 use std::time::Duration;
 use peasub::{CoverStrategy, Node, NodeConfig, ID_SIZE};
+use chacha20poly1305::{aead::{Aead, KeyInit, OsRng}, ChaCha20Poly1305, Key, Nonce};
 
-const MAGIC: &[u8; 4] = b"PESU";
+// With the 256-byte default frame, the app owns message_size - ID_SIZE = 224
+// bytes. Minus a 12-byte nonce and 16-byte Poly1305 tag, that leaves a
+// fixed 196-byte encrypted block (2 bytes length + up to 194 bytes data).
+const PAYLOAD: usize = 256 - ID_SIZE;       // 224
+const NONCE: usize = 12;
+const TAG: usize = 16;
+const INNER: usize = PAYLOAD - NONCE - TAG; // 196
+const LEN_HDR: usize = 2;
+const MAX_DATA: usize = INNER - LEN_HDR;    // 194
 
-fn frame_payload(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(MAGIC.len() + 1 + data.len());
-    out.extend_from_slice(MAGIC);
-    out.push(data.len() as u8);
-    out.extend_from_slice(data);
+// Encrypt `data` into a full-width frame payload. The contents peasub puts
+// on the wire are ciphertext, so a real frame is byte-for-byte
+// indistinguishable from a (random) cover frame.
+fn seal(cipher: &ChaCha20Poly1305, data: &[u8]) -> Vec<u8> {
+    assert!(data.len() <= MAX_DATA, "payload exceeds {MAX_DATA} bytes");
+    let mut inner = vec![0u8; INNER];          // zero pad is hidden by encryption
+    inner[..LEN_HDR].copy_from_slice(&(data.len() as u16).to_be_bytes());
+    inner[LEN_HDR..LEN_HDR + data.len()].copy_from_slice(data);
+
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let ct = cipher.encrypt(&nonce, inner.as_ref()).expect("encrypt");
+    let mut out = Vec::with_capacity(PAYLOAD); // 12 + 196 + 16 == 224 == PAYLOAD
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ct);
     out
 }
 
-fn extract_payload(frame: &[u8]) -> Option<&[u8]> {
-    let payload = frame.get(ID_SIZE..)?;
-    let rest = payload.strip_prefix(MAGIC)?;
-    let len = *rest.first()? as usize;
-    rest.get(1..1 + len)
+// Returns the plaintext if the frame authenticates, or None for cover frames
+// (and frames addressed to a different key) — decryption failure is the filter.
+fn open(cipher: &ChaCha20Poly1305, frame: &[u8]) -> Option<Vec<u8>> {
+    let payload = frame.get(ID_SIZE..)?;       // strip peasub's 32-byte ID
+    let nonce = Nonce::from_slice(payload.get(..NONCE)?);
+    let inner = cipher.decrypt(nonce, payload.get(NONCE..)?).ok()?;
+    let len = u16::from_be_bytes(inner.get(..LEN_HDR)?.try_into().ok()?) as usize;
+    inner.get(LEN_HDR..LEN_HDR + len).map(<[u8]>::to_vec)
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // DEMO ONLY: a hard-coded shared key. A real deployment does key
+    // agreement (per-group keys, or a pea2pea Noise handshake) — peasub
+    // deliberately stays out of the crypto business.
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(&[0x42; 32]));
+
     let mk = || Node::new(NodeConfig {
         listener_addr: Some("127.0.0.1:0".parse()?),
         cover: CoverStrategy::Constant { interval: Duration::from_millis(100) },
@@ -124,13 +157,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     alice.connect(bob_addr).await?;
 
     let mut bob_rx = bob.subscribe();
-    alice.publish(&frame_payload(b"hello, peasub"))?;
+    alice.publish(&seal(&cipher, b"hello, peasub"))?;
 
-    // Bob drains frames until the real one arrives; cover frames
-    // are skipped by extract_payload.
+    // Bob drains frames until one authenticates; cover frames fail to
+    // decrypt and are skipped.
     loop {
         if let Ok(frame) = bob_rx.recv().await {
-            if let Some(payload) = extract_payload(&frame) {
+            if let Some(payload) = open(&cipher, &frame) {
                 println!("Bob got: {:?}", String::from_utf8_lossy(payload));
                 break;
             }
@@ -143,9 +176,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Run `cargo run --example two_nodes` to see this in action, or
-`cargo run --example demo` to see the traffic-analysis-resistance
-property visualized.
+Run `cargo run --example demo` to see this in action and the
+traffic-analysis-resistance property visualized, or
+`cargo run --example poisson_demo` for the Poisson schedule.
 
 ## Choosing the cover rate
 
