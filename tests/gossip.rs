@@ -56,6 +56,19 @@ fn contains_payload(haystack: &[u8], payload: &[u8]) -> bool {
     haystack.windows(payload.len()).any(|w| w == payload)
 }
 
+/// Spins until `addr` is in `node.connected_peers()`, with a
+/// 500 ms timeout. Returns `true` if the connection was
+/// observed.
+async fn wait_connected(node: &Node, addr: std::net::SocketAddr) -> bool {
+    for _ in 0..50 {
+        if node.connected_peers().contains(&addr) {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    false
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn real_message_directly_received_by_one_peer() {
     // Simpler sanity check: 2 nodes, one publishes, the other sees it.
@@ -79,12 +92,10 @@ async fn real_message_directly_received_by_one_peer() {
 
     let bob_addr = bob.local_addr().await.unwrap();
     alice.connect(bob_addr).await.unwrap();
-    for _ in 0..50 {
-        if alice.connected_peers().contains(&bob_addr) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    assert!(
+        wait_connected(&alice, bob_addr).await,
+        "connection never established"
+    );
 
     let mut bob_rx = bob.subscribe();
     let marker = b"peasub-direct-marker".to_vec();
@@ -190,13 +201,7 @@ async fn cover_traffic_runs_at_configured_constant_rate() {
 
     let bob_addr = bob.local_addr().await.unwrap();
     alice.connect(bob_addr).await.unwrap();
-    // wait for the connection to be observed
-    for _ in 0..50 {
-        if alice.connected_peers().contains(&bob_addr) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    assert!(wait_connected(&alice, bob_addr).await);
 
     let mut rx = bob.subscribe();
     let start = Instant::now();
@@ -239,12 +244,7 @@ async fn cover_traffic_runs_at_configured_poisson_rate() {
 
     let bob_addr = bob.local_addr().await.unwrap();
     alice.connect(bob_addr).await.unwrap();
-    for _ in 0..50 {
-        if alice.connected_peers().contains(&bob_addr) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    assert!(wait_connected(&alice, bob_addr).await);
 
     let mut rx = bob.subscribe();
     let start = Instant::now();

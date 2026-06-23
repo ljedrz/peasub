@@ -3,16 +3,16 @@ name = "peasub"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR CC0-1.0"
-description = "A metadata-private gossip protocol built on pea2pea, with constant-rate or Poisson-distributed cover traffic."
+description = "A metadata-private gossip protocol built on peashape, with constant-rate or Poisson-distributed cover traffic."
 repository = "https://github.com/ljedrz/peasub"
 readme = "README.md"
 keywords = ["p2p", "gossip", "privacy", "metadata", "cover-traffic"]
 categories = ["network-programming"]
 
 [dependencies]
+peashape = "0.1"
 pea2pea = "0.56"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
-tokio-util = { version = "0.7", default-features = false, features = ["codec"] }
 bytes = "1"
 tracing = "0.1"
 rand = "0.9"
