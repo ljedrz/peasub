@@ -97,8 +97,9 @@ the payload. This does double duty:
 
 Put the true length *inside* the encrypted block and size the
 sealed payload to exactly `message_size - ID_SIZE` so `peasub`
-adds no padding and the boundaries are deterministic. See
-`examples/demo.rs` for a complete worked example.
+adds no padding and the boundaries are deterministic. The Quick
+start below is a complete worked example; `cargo run --example
+encrypted` runs it end to end.
 
 ## Quick start
 
@@ -108,7 +109,7 @@ receives and extracts the payload from the cover stream:
 ```rust
 use std::time::Duration;
 use peasub::{CoverStrategy, Node, NodeConfig, ID_SIZE};
-use chacha20poly1305::{aead::{Aead, KeyInit, OsRng}, ChaCha20Poly1305, Key, Nonce};
+use chacha20poly1305::{aead::{Aead, AeadCore, KeyInit, OsRng}, ChaCha20Poly1305, Key, Nonce};
 
 // With the 256-byte default frame, the app owns message_size - ID_SIZE = 224
 // bytes. Minus a 12-byte nonce and 16-byte Poly1305 tag, that leaves a
@@ -188,9 +189,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Run `cargo run --example demo` to see this in action and the
-traffic-analysis-resistance property visualized, or
-`cargo run --example poisson_demo` for the Poisson schedule.
+The crate ships four runnable examples:
+
+- `cargo run --example encrypted` — the AEAD pattern above, end to end.
+- `cargo run --example two_nodes` — the minimal subscribe/filter
+  mechanics (with a *plaintext* marker — see the note in the file;
+  not privacy-preserving, use `encrypted` for that).
+- `cargo run --example demo` — visualizes the traffic-analysis
+  resistance: constant rate, one frame size, no signal at publish time.
+- `cargo run --example poisson_demo` — the same, with a Poisson schedule.
 
 ## Choosing the cover rate
 

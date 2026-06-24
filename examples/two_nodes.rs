@@ -6,6 +6,14 @@
 //! subscribe, filter incoming frames by a recognizable payload
 //! format, and handle the ones that are real.
 //!
+//! PRIVACY NOTE: for clarity this example marks real frames with a
+//! *plaintext* magic header. That header is visible on the wire, so a
+//! passive observer can pick out which frames are real — defeating the
+//! metadata-privacy property `peasub` exists to provide. It is fine
+//! for understanding the mechanics, but a real deployment must make
+//! the payload indistinguishable from random by encrypting it. See
+//! `examples/encrypted.rs` for the privacy-correct AEAD pattern.
+//!
 //! Run with: cargo run --example two_nodes
 
 use std::time::Duration;

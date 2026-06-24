@@ -198,6 +198,12 @@ impl NodeConfig {
             max_connections: self.max_connections,
             max_connections_per_ip: self.max_connections_per_ip,
             reuse_listener_port: self.reuse_listener_port,
+            // Fill any remaining `ShapeConfig` fields (e.g. a custom
+            // cover generator) with their defaults. Spreading the
+            // default rather than listing every field keeps this
+            // conversion compiling across peashape versions that add
+            // new fields.
+            ..ShapeConfig::default()
         }
     }
 }
