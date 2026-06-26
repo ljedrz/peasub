@@ -1,5 +1,9 @@
 # peasub
 
+[![Crates.io](https://img.shields.io/crates/v/peasub.svg)](https://crates.io/crates/peasub)
+[![Documentation](https://docs.rs/peasub/badge.svg)](https://docs.rs/peasub)
+[![dependency status](https://deps.rs/repo/github/ljedrz/peasub/status.svg)](https://deps.rs/repo/github/ljedrz/peasub)
+
 A metadata-private gossip protocol built on top of [`peashape`],
 which in turn is built on [`pea2pea`]. It disseminates messages
 through a peer-to-peer network while resisting traffic analysis
@@ -9,6 +13,24 @@ via constant-rate or Poisson-distributed cover traffic.
 traffic-shaping primitive. If you want to build a different
 private protocol (private RPC, private file chunks, private
 membership, …) you can use `peashape` directly.
+
+---
+
+### 📖 Table of Contents
+
+- [Threat model](#threat-model)
+- [How it works](#how-it-works)
+- [Receiving messages](#receiving-messages)
+- [Quick start](#quick-start)
+- [Choosing the cover rate](#choosing-the-cover-rate)
+- [Fanout](#fanout)
+- [Cover strategies](#cover-strategies)
+- [Limitations](#limitations)
+- [Building on top of `peasub`](#building-on-top-of-peasub)
+- [License](#license)
+- [Peapod](#-peapod)
+
+---
 
 ## Threat model
 
