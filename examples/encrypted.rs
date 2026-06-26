@@ -22,10 +22,10 @@
 use std::time::Duration;
 
 use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
     ChaCha20Poly1305, Key, Nonce,
+    aead::{Aead, AeadCore, KeyInit, OsRng},
 };
-use peasub::{CoverStrategy, Node, NodeConfig, ID_SIZE};
+use peasub::{CoverStrategy, ID_SIZE, Node, NodeConfig};
 
 // With the 256-byte default frame, the app owns message_size - ID_SIZE
 // = 224 bytes. Minus a 12-byte nonce and 16-byte Poly1305 tag, that
@@ -109,11 +109,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut got = None;
     while tokio::time::Instant::now() < deadline {
         if let Ok(Ok(frame)) = tokio::time::timeout(Duration::from_millis(200), bob_rx.recv()).await
+            && let Some(plaintext) = open(&cipher, &frame)
         {
-            if let Some(plaintext) = open(&cipher, &frame) {
-                got = Some(plaintext);
-                break;
-            }
+            got = Some(plaintext);
+            break;
         }
     }
 

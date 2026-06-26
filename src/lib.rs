@@ -163,4 +163,4 @@ pub use peashape::ID_SIZE;
 
 /// Re-exported so that callers can wire up a topology in
 /// tests without adding `pea2pea` as a direct dependency.
-pub use pea2pea::{self, connect_nodes, Topology};
+pub use pea2pea::{self, Topology, connect_nodes};

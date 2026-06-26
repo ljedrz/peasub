@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use peasub::{connect_nodes, CoverStrategy, Node, NodeConfig, Topology};
+use peasub::{CoverStrategy, Node, NodeConfig, Topology, connect_nodes};
 
 /// Returns a [`NodeConfig`] tailored for tests: small messages, fast
 /// cover schedule, loopback listener, and a permissive per-IP
@@ -106,10 +106,10 @@ async fn real_message_directly_received_by_one_peer() {
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut got = false;
     while !got && Instant::now() < deadline {
-        if let Ok(Ok(buf)) = tokio::time::timeout(Duration::from_millis(100), bob_rx.recv()).await {
-            if contains_payload(&buf, &marker) {
-                got = true;
-            }
+        if let Ok(Ok(buf)) = tokio::time::timeout(Duration::from_millis(100), bob_rx.recv()).await
+            && contains_payload(&buf, &marker)
+        {
+            got = true;
         }
     }
     assert!(
@@ -152,10 +152,10 @@ async fn real_message_propagates_to_majority() {
             if seen[i] {
                 continue;
             }
-            if let Ok(Ok(buf)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
-                if contains_payload(&buf, &marker) {
-                    seen[i] = true;
-                }
+            if let Ok(Ok(buf)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await
+                && contains_payload(&buf, &marker)
+            {
+                seen[i] = true;
             }
         }
     }
@@ -297,10 +297,10 @@ async fn duplicate_messages_are_dropped() {
             if received_at[i].is_some() {
                 continue;
             }
-            if let Ok(Ok(buf)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
-                if contains_payload(&buf, &marker) {
-                    received_at[i] = Some(Instant::now());
-                }
+            if let Ok(Ok(buf)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await
+                && contains_payload(&buf, &marker)
+            {
+                received_at[i] = Some(Instant::now());
             }
         }
     }
@@ -319,10 +319,10 @@ async fn duplicate_messages_are_dropped() {
         }
         let mut duplicates = 0;
         for _ in 0..30 {
-            if let Ok(Ok(buf)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
-                if contains_payload(&buf, &marker) {
-                    duplicates += 1;
-                }
+            if let Ok(Ok(buf)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await
+                && contains_payload(&buf, &marker)
+            {
+                duplicates += 1;
             }
         }
         assert_eq!(
@@ -386,10 +386,10 @@ async fn fanout_reaches_all_nodes() {
             if seen[i] {
                 continue;
             }
-            if let Ok(Ok(buf)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
-                if contains_payload(&buf, &marker) {
-                    seen[i] = true;
-                }
+            if let Ok(Ok(buf)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await
+                && contains_payload(&buf, &marker)
+            {
+                seen[i] = true;
             }
         }
     }

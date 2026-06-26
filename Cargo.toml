@@ -1,13 +1,17 @@
 [package]
 name = "peasub"
 version = "0.2.0"
-edition = "2021"
-license = "MIT OR CC0-1.0"
+authors = ["ljedrz <ljedrz@gmail.com>"]
+edition = "2024"
 description = "A metadata-private gossip protocol built on peashape, with constant-rate or Poisson-distributed cover traffic."
+license = "CC0-1.0 OR MIT"
 repository = "https://github.com/ljedrz/peasub"
+homepage = "https://github.com/ljedrz/peasub"
+documentation = "https://docs.rs/peasub"
 readme = "README.md"
-keywords = ["p2p", "gossip", "privacy", "metadata", "cover-traffic"]
 categories = ["network-programming"]
+keywords = ["p2p", "gossip", "privacy", "metadata", "cover-traffic"]
+rust-version = "1.88"
 
 [dependencies]
 peashape = "0.2"
