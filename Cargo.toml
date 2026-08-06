@@ -14,8 +14,8 @@ keywords = ["p2p", "gossip", "privacy", "metadata", "cover-traffic"]
 rust-version = "1.88"
 
 [dependencies]
-peashape = "0.2"
-pea2pea = "0.56"
+peashape = "0.4"
+pea2pea = "0.57"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 bytes = "1"
 tracing = "0.1"
