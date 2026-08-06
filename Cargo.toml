@@ -1,6 +1,6 @@
 [package]
 name = "peasub"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["ljedrz <ljedrz@gmail.com>"]
 edition = "2024"
 description = "A metadata-private gossip protocol built on peashape, with constant-rate or Poisson-distributed cover traffic."
